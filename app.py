@@ -1,11 +1,8 @@
-import hashlib
-import json
 from textwrap import dedent
 from time import time
 from urllib import response
 from uuid import uuid4
 
-import flask
 from blockchain import BlockChain
 from flask import Flask, jsonify, request
 
@@ -18,9 +15,34 @@ node_id = str(uuid4()).replace("-", "")
 blockchain = BlockChain()
 
 
-@app.route("/mine", methods=["GET"])
+@app.route("/mine", methods=['GET'])
 def mine():
-    return "We'll mine a new Block"
+    # we run the proof of work algorithm to get the next proof...
+    last_block = blockchain.last_block
+    last_proof = last_block['proof']
+    proof = blockchain.PoW(last_proof)
+
+    # we must receive a reward for finding the proof
+    # the sender is '0' to signify that this node has mined a new coin.
+    blockchain.new_transaction(
+        sender = '0',
+        recipient= node_id,
+        amount= 1
+    )
+
+    # forge the new block by adding it to the chain
+    previous_hash = blockchain.hash(last_block)
+    block = blockchain.new_block(proof, previous_hash)
+
+    response = {
+        'message' : 'New Block Forged',
+        'index' : block['index'],
+        'transactions' : block['transactions'],
+        'proof' : block['proof'],
+        'previous_hash' : block['previous_hash']
+    }
+
+    return jsonify(response), 200 
 
 
 @app.route("/transactions/new", methods=["POST"])
