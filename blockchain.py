@@ -1,18 +1,21 @@
 import hashlib
 import json
 from time import time
-
+from urllib.parse import urlparse
+import requests
+from flask import request
 
 
 class BlockChain(object):
     def __init__(self) -> None:
         self.chain = []
         self.cur_transaction = []
+        self.nodes = set()
 
         # Create the genesis block
-        self.new_block(previous_hash = 1, proof = 100)
+        self.new_block(previous_hash=1, proof=100)
 
-    def new_block(self, proof, previous_hash = None):
+    def new_block(self, proof, previous_hash=None):
         """
         Create a new Block in the Blockchain
         :param proof: <int> The proof given by the Proof of Work algorithm
@@ -20,11 +23,11 @@ class BlockChain(object):
         :return: <dict> New Block
         """
         block = {
-            'index': len(self.chain) +1,
-            'timestamp': time(),
-            'transactions': self.cur_transaction,
-            'proof': proof,
-            'previous_hash': previous_hash or self.hash(self.chain[-1])
+            "index": len(self.chain) + 1,
+            "timestamp": time(),
+            "transactions": self.cur_transaction,
+            "proof": proof,
+            "previous_hash": previous_hash or self.hash(self.chain[-1]),
         }
 
         self.cur_transaction = []
@@ -40,13 +43,11 @@ class BlockChain(object):
         :return: <int> The index of the Block that will hold this transaction
         """
 
-        self.cur_transaction.append({
-            'sender': sender,
-            'recipient' : recipient,
-            'amount' : amount
-        })
+        self.cur_transaction.append(
+            {"sender": sender, "recipient": recipient, "amount": amount}
+        )
 
-        return self.last_block['index'] + 1
+        return self.last_block["index"] + 1
 
     @staticmethod
     def hash(block):
@@ -59,7 +60,7 @@ class BlockChain(object):
         return hashlib.sha256(block_string).hexdigest()
 
     @property
-    def last_block(self)->dict:
+    def last_block(self) -> dict:
         return self.chain[-1]
 
     def PoW(self, last_proof):
@@ -76,6 +77,32 @@ class BlockChain(object):
 
         return proof
 
+    def valid_chain(self, chain):
+        """
+        Determine if a given blockchain is valid
+        :param chain: <list> A blockchain
+        :return: <bool> True if valid, False if not
+        """
+        last_block = chain[0]
+        cur_idx = 1
+
+        while cur_idx < len(chain):
+            block = chain[cur_idx]
+            print(f"{last_block}")
+            print(f"{block}")
+            print("\n-----------\n")
+            if block["previous_hash"] != self.hash(last_block):
+                return False
+
+            # Check that the Proof of Work is correct
+            if not self.valid_proof(last_block["proof"], block["proof"]):
+                return False
+
+            last_block = block
+            cur_idx += 1
+
+        return True
+
     @staticmethod
     def valid_proof(last_proof, proof):
         """
@@ -85,7 +112,42 @@ class BlockChain(object):
         :return: <bool> True if correct, False if not.
         """
 
-        guess = f'{last_proof}{proof}'.encode()
+        guess = f"{last_proof}{proof}".encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:4] == "0000"
-    
+
+    def resolve_conflicts(self):
+        """
+        This is our Consensus Algorithm, it resolves conflicts
+        by replacing our chain with the longest one in the network.
+        :return: <bool> True if our chain was replaced, False if not
+        """
+        neighbours = self.nodes
+        new_chain = None
+
+        max_len = len(self.chain)
+        for node in neighbours:
+            response = requests.get(f"http://{node}/chain")
+
+            if response.status_code == 200:
+                length = response.json()["length"]
+                chain = response.json()["chain"]
+
+                # Check if the length is longer and the chain is valid
+                if length > max_length and self.valid_chain(chain):
+                    max_length = length
+                    new_chain = chain
+        if new_chain:
+            self.chain = new_chain
+            return True
+        return False
+
+    def register_node(self, address):
+        """
+        Add a new node to the list of nodes
+        :param address: <str> Address of node. Eg. 'http://192.168.0.5:5000'
+        :return: None
+        """
+
+        parsed_url = urlparse(address)
+        self.nodes.add(parsed_url.netloc)
